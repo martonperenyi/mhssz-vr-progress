@@ -101,8 +101,15 @@ details summary{cursor:pointer;font-size:13px;color:var(--text-secondary);margin
   </div>
 
   <div class="card">
+    <h2>Competitors – season averages</h2>
+    <div class="legend"><span><svg width="40" height="12"><path d="M2,9L14,5L26,7L38,3" fill="none" stroke="var(--s1)" stroke-width="1.5"/><circle cx="38" cy="3" r="2.5" fill="var(--s1)"/></svg>Trend = season average per year (<span id="spanLbl"></span>, 0–100)</span>
+      <span class="muted">Click a column header to sort · click rows to add or remove competitors on the timeline below (up to 10)</span></div>
+    <div class="scroll" style="max-height:480px"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+  </div>
+
+  <div class="card">
     <h2>Progress per competitor – timeline</h2>
-    <p class="sub" style="margin:0">Click competitors in the table below (up to 10) to compare them. Hover a name or line to highlight it. Each marker is one competition result. The dotted segments are season averages.</p>
+    <p class="sub" style="margin:0">Click competitors in the table above (up to 10) to compare them. Hover a name or line to highlight it. Each marker is one competition result. The dotted segments are season averages.</p>
     <div class="qp">
       <span class="qp-lbl">Quick pick:</span>
       <select id="qpComp" aria-label="Competition"></select>
@@ -130,19 +137,14 @@ details summary{cursor:pointer;font-size:13px;color:var(--text-secondary);margin
     <div class="scroll" style="max-height:560px"><table id="stTbl"></table></div>
   </div>
 
-  <div class="card">
+  <!-- hidden for now at the user's request; remove style="display:none" to bring it back -->
+  <div class="card" id="cohortCard" style="display:none">
     <h2>Age group – average performance per season</h2>
     <p class="sub" style="margin:0 0 6px">Each cell is the mean of the competitors' season averages for that birth year and season, labelled with category and number of competitors. “Avg YoY Δ” is the mean change of a competitor between consecutive seasons. Click a row to add or remove that birth year in the filter.</p>
     <div class="ramp" id="ramp"></div>
     <div id="cohort" style="overflow:auto"></div>
   </div>
 
-  <div class="card">
-    <h2>Competitors – season averages</h2>
-    <div class="legend"><span><svg width="40" height="12"><path d="M2,9L14,5L26,7L38,3" fill="none" stroke="var(--s1)" stroke-width="1.5"/><circle cx="38" cy="3" r="2.5" fill="var(--s1)"/></svg>Trend = season average per year (<span id="spanLbl"></span>, 0–100)</span>
-      <span class="muted">Click a column header to sort · click a row to add it to the timeline</span></div>
-    <div class="scroll"><table id="tbl"><thead></thead><tbody></tbody></table></div>
-  </div>
 </div>
 <div id="tip"></div>
 <script>
@@ -354,7 +356,7 @@ function renderTable(rows){
   $("tbl").querySelectorAll("tbody tr[data-id]").forEach(tr=>tr.onclick=()=>{
     const id=people.has(+tr.dataset.id)?+tr.dataset.id:tr.dataset.id;
     if (selected.includes(id)) rmSel(id); else addSel(id);
-    renderAll(); $("timeline").scrollIntoView({behavior:"smooth",block:"center"});
+    renderInPlace(tr);
   });
 }
 
@@ -362,6 +364,16 @@ function renderAll(){
   const rows=visible(), f=filt();
   $("stats").textContent=`${rows.length} competitors · ${rows.reduce((a,s)=>a+s.n,0)} results · ${DATA.comps.filter(c=>c.y>=f.from&&c.y<=f.to&&(f.other||c.k==="mk")).length} competitions`;
   renderCohort(rows); renderTable(rows); renderTimeline(); renderStandings();
+}
+// re-render after a row click without moving anything: the clicked row stays under the mouse and the
+// tables keep their own scroll position, so several rows can be clicked in a row
+function renderInPlace(tr){
+  const table = tr.closest("table"), box = tr.closest(".scroll"), id = tr.dataset.id;
+  const top = tr.getBoundingClientRect().top, boxTop = box ? box.scrollTop : 0;
+  renderAll();
+  if (box) box.scrollTop = boxTop;
+  const again = table.querySelector(`tr[data-id="${CSS.escape(id)}"]`);
+  if (again) window.scrollBy(0, again.getBoundingClientRect().top - top);
 }
 for (const id of ["fGender","fType","fFrom","fTo","fOther","fForeign"]) $(id).onchange=renderAll;
 $("fName").oninput=()=>{ clearSel(); renderAll(); };
@@ -447,14 +459,22 @@ function stFillCats(){
   $("stCat").innerHTML=keys.map(k=>`<option value="${k}">${catLabel(k,y)} (${seen.get(k).size})</option>`).join("") || `<option value="">no rounds in the system</option>`;
   $("stCat").value = keys.includes(prev)?prev:(keys.includes("TEEN_AGE|FEMALE")?"TEEN_AGE|FEMALE":keys[0]||"");
 }
+let stSort = "total";
 function renderStandings(){
   const y=+$("stSeason").value, t=$("stType").value, key=$("stCat").value;
   if (!key){ $("stTbl").innerHTML=`<tbody><tr><td class="empty">No ${t.toLowerCase()} Magyar Kupa rounds for ${y} in the system.</td></tr></tbody>`; $("stInfo").textContent=""; return; }
   const [ag,g]=key.split("|"), {rounds,k,rows}=standings(y,t,ag,g);
+  // average of the best n-1 rounds so far (a missed round counts as 0): compares climbers who missed a round
+  const m=Math.max(1,rounds.length-1);
+  for (const r of rows){ const v=rounds.map(c=>r.per.get(c)??0).sort((a,b)=>b-a).slice(0,m); r.avg=v.reduce((a,b)=>a+b,0)/m; }
+  if (stSort==="avg"){
+    rows.sort((a,b)=>b.avg-a.avg||b.total-a.total);
+    rows.forEach((r,i)=>{ r.rank = i && Math.abs(r.avg-rows[i-1].avg)<1e-9 ? rows[i-1].rank : i+1; });
+  }
   const prov=rounds.filter(c=>comps.get(c).prov);
   $("stInfo").textContent=`${rounds.length} round${rounds.length===1?"":"s"} so far, ${k} count`+(prov.length?` · * provisional: sports medicals not yet validated in the system, so expiry dates are used`:"");
   const short=c=>{ const cm=comps.get(c); return `${esc(cm.name.split(/[,(]/)[0].replace(/\b(Magyar Kupa|forduló|MK)\b/g,"").replace(/\s+/g," ").trim().slice(0,24))}<br><span class="muted">${cm.date.slice(5)}${cm.prov?"*":""}</span>`; };
-  let h=`<thead><tr><th class="num">#</th><th>Name</th><th>Born</th>${rounds.map(c=>`<th class="num" style="white-space:normal;min-width:84px">${short(c)}</th>`).join("")}<th class="num">Total</th><th class="num">Rounds</th><th>Title</th></tr></thead><tbody>`;
+  let h=`<thead><tr><th class="num">#</th><th>Name</th><th>Born</th>${rounds.map(c=>`<th class="num" style="white-space:normal;min-width:84px">${short(c)}</th>`).join("")}<th class="num" data-sort="total" title="Season total by the rulebook – click to sort">Total${stSort==="total"?" ▼":""}</th><th class="num" data-sort="avg" title="Average of the best ${m} of ${rounds.length} rounds (a missed round counts as 0) – click to sort">Avg best ${m}/${rounds.length}${stSort==="avg"?" ▼":""}</th><th class="num">Rounds</th><th>Title</th></tr></thead><tbody>`;
   for (const r of rows){
     const p=people.get(r.p);
     h+=`<tr data-id="${r.p}" class="${selected.includes(r.p)?"sel":""}"><td class="num">${r.rank}</td><td>${esc(p.name)}</td><td>${byLabel(p)}</td>`;
@@ -464,11 +484,12 @@ function renderStandings(){
       const note = w ? `<span class="muted" style="font-size:11px">${w.startsWith("foreign")?"guest":"no med."}</span> ` : `<span class="muted" style="font-size:11px">${pl}.</span> `;
       h+=`<td class="num" title="${w?esc(w):`${pl}. place for points`}${dr?" · dropped":""}">${note}${dr?`<s class="muted">${v}</s>`:v}</td>`;
     }
-    h+=`<td class="num"><b>${r.total}</b></td><td class="num">${r.n}/${rounds.length}</td><td>${r.eligible?"":"<span class=\"muted\">not eligible</span>"}</td></tr>`;
+    h+=`<td class="num">${stSort==="total"?`<b>${r.total}</b>`:r.total}</td><td class="num">${stSort==="avg"?`<b>${r.avg.toFixed(1)}</b>`:r.avg.toFixed(1)}</td><td class="num">${r.n}/${rounds.length}</td><td>${r.eligible?"":"<span class=\"muted\">not eligible</span>"}</td></tr>`;
   }
   $("stTbl").innerHTML=h+"</tbody>";
+  $("stTbl").querySelectorAll("th[data-sort]").forEach(th=>{ th.style.cursor="pointer"; th.onclick=()=>{ stSort=th.dataset.sort; renderStandings(); }; });
   $("stTbl").querySelectorAll("tr[data-id]").forEach(tr=>tr.onclick=()=>{ const id=people.has(+tr.dataset.id)?+tr.dataset.id:tr.dataset.id;
-    selected.includes(id)?rmSel(id):addSel(id); renderAll(); });
+    selected.includes(id)?rmSel(id):addSel(id); renderInPlace(tr); });
   $("stTop").onclick=()=>{ clearSel(); rows.slice(0,10).forEach(r=>addSel(r.p));
     $("qpMsg").textContent=`Top ${Math.min(10,rows.length)} of the ${y} ${t.toLowerCase()} standings, ${catLabel(key,y)}`; renderAll();
     $("timeline").scrollIntoView({behavior:"smooth",block:"center"}); };
