@@ -131,7 +131,7 @@ details summary{cursor:pointer;font-size:13px;color:var(--text-secondary);margin
 
   <div class="card" id="stCard">
     <h2>Magyar Kupa season standings</h2>
-    <p class="sub" style="margin:0 0 6px">Calculated with the MHSSZ rulebook (2023, §10) from the corrected places. Points per round: 100, 80, 65, 55, 51, 47, 43, 40, 37, 34 … down to 1 point for 30th, and tied places share the average. Only climbers with a valid sports medical earn points; foreign guests and anyone without one are skipped, and those below move up. For climbers without a sports medical the round is still calculated, shown as <i>(points)</i> in italics: the place they would have taken among the scoring field, without displacing anyone. It is <b>not</b> counted in the season total or the title, only in the “Avg best” column. 4–5 rounds: the weakest is dropped; 6 or more: the weakest two are dropped. Struck-through numbers are dropped rounds. Title condition: missed at most 2 rounds and took part in at least half. The same method reproduces 322 of 325 of the system's published 2025 totals. The 2026 rules document isn't public, so 2026 assumes the 2023 system.</p>
+    <p class="sub" style="margin:0 0 6px">Calculated with the MHSSZ rulebook (2023, §10) from the corrected places. Points per round: 100, 80, 65, 55, 51, 47, 43, 40, 37, 34 … down to 1 point for 30th, and tied places share the average. Foreign guests earn no points; they are skipped and those below move up. The sports medical (sportorvosi engedély) is not checked here: every Hungarian climber scores by their place. 4–5 rounds: the weakest is dropped; 6 or more: the weakest two are dropped. Struck-through numbers are dropped rounds. Title condition: missed at most 2 rounds and took part in at least half. (With the sports-medical rule the same method reproduced 322 of 325 of the system's published 2025 totals, so totals here can differ from the official ones for climbers who had no valid medical.) The 2026 rules document isn't public, so 2026 assumes the 2023 system.</p>
     <div class="qp">
       <select id="stSeason" aria-label="Season"></select>
       <select id="stType" aria-label="Discipline"><option value="BOULDER">Boulder</option><option value="LEAD">Lead</option><option value="SPEED">Speed</option></select>
@@ -494,31 +494,25 @@ function standings(year, typ, ag, g){
     (parts.get(r.c)||parts.set(r.c,[]).get(r.c)).push(r);
   }
   const rounds=[...parts.keys()].sort((a,b)=>comps.get(a).date.localeCompare(comps.get(b).date));
-  const per=new Map(), plc=new Map(), why=new Map(), calc=new Map();
+  const per=new Map(), plc=new Map(), why=new Map();
   const put=(m,p,c,v)=>(m.get(p)||m.set(p,new Map()).get(p)).set(c,v);
   for (const cid of rounds){
-    const all=parts.get(cid), ok=all.filter(r=>r.mv&&!people.get(r.p).f);
+    const all=parts.get(cid), ok=all.filter(r=>!people.get(r.p).f);   // foreign guests are skipped, those below move up
     for (const r of all){
-      // climbers without a sports medical get their round calculated (the place they'd take among the scoring
-      // field, nobody displaced), but it stays out of the official season total
-      const guest=people.get(r.p).f, self=ok.includes(r)?0:1;
-      if (!self||!guest){
-        const place=1+ok.filter(o=>o.pos<r.pos).length, tied=ok.filter(o=>o.pos===r.pos).length+self;
-        let sum=0; for (let i=0;i<tied;i++) sum+=cupPts(place+i);
-        put(self?calc:per,r.p,cid,Math.floor(sum/tied)); put(plc,r.p,cid,place);
-      }
-      if (self){ put(per,r.p,cid,0); put(why,r.p,cid,guest?"foreign guest":"no valid sports medical"); }
+      if (!ok.includes(r)){ put(per,r.p,cid,0); put(why,r.p,cid,"foreign guest"); continue; }
+      const place=1+ok.filter(o=>o.pos<r.pos).length, tied=ok.filter(o=>o.pos===r.pos).length;
+      let sum=0; for (let i=0;i<tied;i++) sum+=cupPts(place+i);
+      put(per,r.p,cid,Math.floor(sum/tied)); put(plc,r.p,cid,place);
     }
   }
   const k=counted(rounds.length), need=Math.ceil(rounds.length/2), rows=[];
   for (const [p,m] of per){
     const order=[...m.entries()].sort((a,b)=>b[1]-a[1]);
     const dropped=new Set(order.slice(k).map(([c])=>c));
-    const why_=why.get(p)||new Map(), calc_=calc.get(p)||new Map();
-    const cplaces=[...(plc.get(p)||new Map())].filter(([c])=>!calc_.has(c)).map(([,v])=>v);   // tie-break: official places only
-    rows.push({p, per:m, calc:calc_, places:plc.get(p)||new Map(), why:why_, dropped,
+    const places=[...(plc.get(p)||new Map()).values()];
+    rows.push({p, per:m, places:plc.get(p)||new Map(), why:why.get(p)||new Map(), dropped,
       total:order.slice(0,k).reduce((a,[,v])=>a+v,0), n:m.size, eligible:m.size>=need&&rounds.length-m.size<=2,
-      cb:Array.from({length:30},(_,i)=>cplaces.filter(x=>x===i+1).length)});
+      cb:Array.from({length:30},(_,i)=>places.filter(x=>x===i+1).length)});
   }
   const cbCmp=(a,b)=>{ for(let i=0;i<30;i++) if(a.cb[i]!==b.cb[i]) return b.cb[i]-a.cb[i]; return 0; };
   rows.sort((a,b)=>b.total-a.total || cbCmp(a,b) || people.get(a.p).name.localeCompare(people.get(b.p).name,"hu"));
@@ -542,24 +536,21 @@ function renderStandings(){
   const [ag,g]=key.split("|"), {rounds,k,rows}=standings(y,t,ag,g);
   // average of the best n-1 rounds so far (a missed round counts as 0): compares climbers who missed a round
   const m=Math.max(1,rounds.length-1);
-  for (const r of rows){ const v=rounds.map(c=>r.calc.get(c)??r.per.get(c)??0).sort((a,b)=>b-a).slice(0,m); r.avg=v.reduce((a,b)=>a+b,0)/m; }
+  for (const r of rows){ const v=rounds.map(c=>r.per.get(c)??0).sort((a,b)=>b-a).slice(0,m); r.avg=v.reduce((a,b)=>a+b,0)/m; }
   if (stSort==="avg"){
     rows.sort((a,b)=>b.avg-a.avg||b.total-a.total);
     rows.forEach((r,i)=>{ r.rank = i && Math.abs(r.avg-rows[i-1].avg)<1e-9 ? rows[i-1].rank : i+1; });
   }
-  const prov=rounds.filter(c=>comps.get(c).prov);
-  $("stInfo").textContent=`${rounds.length} round${rounds.length===1?"":"s"} so far, ${k} count`+(prov.length?` · * provisional: sports medicals not yet validated in the system, so expiry dates are used`:"");
-  const short=c=>{ const cm=comps.get(c); return `${esc(cm.name.split(/[,(]/)[0].replace(/\b(Magyar Kupa|forduló|MK)\b/g,"").replace(/\s+/g," ").trim().slice(0,24))}<br><span class="muted">${cm.date.slice(5)}${cm.prov?"*":""}</span>`; };
+  $("stInfo").textContent=`${rounds.length} round${rounds.length===1?"":"s"} so far, ${k} count`;
+  const short=c=>{ const cm=comps.get(c); return `${esc(cm.name.split(/[,(]/)[0].replace(/\b(Magyar Kupa|forduló|MK)\b/g,"").replace(/\s+/g," ").trim().slice(0,24))}<br><span class="muted">${cm.date.slice(5)}</span>`; };
   let h=`<thead><tr><th class="num">#</th><th>Name</th><th>Born</th>${rounds.map(c=>`<th class="num" style="white-space:normal;min-width:84px">${short(c)}</th>`).join("")}<th class="num" data-sort="total" title="Season total by the rulebook – click to sort">Total${stSort==="total"?" ▼":""}</th><th class="num" data-sort="avg" title="Average of the best ${m} of ${rounds.length} rounds (a missed round counts as 0) – click to sort">Avg best ${m}/${rounds.length}${stSort==="avg"?" ▼":""}</th><th class="num">Rounds</th><th>Title</th></tr></thead><tbody>`;
   for (const r of rows){
     const p=people.get(r.p);
     h+=`<tr data-id="${r.p}" class="${selected.includes(r.p)?"sel":""}"><td class="num">${r.rank}</td><td>${esc(p.name)}</td><td>${byLabel(p)}</td>`;
     for (const c of rounds){
       if (!r.per.has(c)){ h+=`<td class="num muted">–</td>`; continue; }
-      const v=r.per.get(c), pl=r.places.get(c), w=r.why.get(c), dr=r.dropped.has(c), cv=r.calc.get(c);
-      if (cv!=null){   // no sports medical: calculated, shown in italics, not in the season total
-        h+=`<td class="num" title="No valid sports medical: would be ${pl}. place for points → ${cv}. Not counted in the season total (counted in the average)."><span class="muted" style="font-size:11px">no med. ${pl}.</span> <i class="muted">(${cv})</i></td>`; continue; }
-      const note = w ? `<span class="muted" style="font-size:11px">${w.startsWith("foreign")?"guest":"no med."}</span> ` : `<span class="muted" style="font-size:11px">${pl}.</span> `;
+      const v=r.per.get(c), pl=r.places.get(c), w=r.why.get(c), dr=r.dropped.has(c);
+      const note = w ? `<span class="muted" style="font-size:11px">guest</span> ` : `<span class="muted" style="font-size:11px">${pl}.</span> `;
       h+=`<td class="num" title="${w?esc(w):`${pl}. place for points`}${dr?" · dropped":""}">${note}${dr?`<s class="muted">${v}</s>`:v}</td>`;
     }
     h+=`<td class="num">${stSort==="total"?`<b>${r.total}</b>`:r.total}</td><td class="num">${stSort==="avg"?`<b>${r.avg.toFixed(1)}</b>`:r.avg.toFixed(1)}</td><td class="num">${r.n}/${rounds.length}</td><td>${r.eligible?"":"<span class=\"muted\">not eligible</span>"}</td></tr>`;
