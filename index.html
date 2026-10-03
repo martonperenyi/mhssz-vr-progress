@@ -79,6 +79,17 @@ details summary{cursor:pointer;font-size:13px;color:var(--text-secondary);margin
 .tabs{display:flex;gap:4px;border-bottom:1px solid var(--axis);margin:0 0 16px}
 .tabs button{font:inherit;font-size:14px;padding:8px 14px;border:none;border-bottom:2px solid transparent;background:none;color:var(--text-secondary);cursor:pointer;margin-bottom:-1px}
 .tabs button.on{color:var(--text-primary);border-bottom-color:var(--s1);font-weight:600}
+.coach-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.coach-head h2{margin:0}
+.coach-head select{font:inherit;font-size:13px;padding:5px 8px;border:1px solid var(--axis);border-radius:6px;background:var(--surface-1);color:var(--text-primary);max-width:100%}
+.coach-note{font-size:12px;color:var(--text-secondary);line-height:1.5;margin:9px 0}
+.coach-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0}
+.coach-metric{border:1px solid var(--border);border-radius:8px;padding:10px;font-size:12px;color:var(--text-secondary)}
+.coach-metric b{display:block;font-size:20px;color:var(--text-primary);font-variant-numeric:tabular-nums}
+.coach-table td{white-space:normal;vertical-align:top;min-width:76px}
+.coach-table th,.coach-table tr{cursor:default}
+.coach-caution{color:var(--text-secondary);font-size:11px}
+@media(max-width:620px){.coach-grid{grid-template-columns:1fr 1fr}}
 </style>
 </head>
 <body>
@@ -127,6 +138,13 @@ details summary{cursor:pointer;font-size:13px;color:var(--text-secondary);margin
     <div class="legend" id="tlLegend"></div>
     <div id="timeline"></div>
     <details><summary>Table view of selected results</summary><div id="tlTable"></div></details>
+  </div>
+
+  <div class="card" id="coachCard">
+    <div class="coach-head"><h2>Coach's development profile</h2><select id="coachPick" aria-label="Competitor for the coach's profile"></select></div>
+    <p class="sub">Boulder and lead kept apart, season by season, for one of the competitors selected above. The number of starts and the field size help to read the percentile.</p>
+    <div id="coachProfile"></div>
+    <p class="coach-note">Coaching interpretation: Czakó László · Competition results alone cannot show a technical, physical or mental cause.</p>
   </div>
 
   <div class="card" id="stCard">
@@ -373,6 +391,40 @@ const huTL = {pfx:"", sel:huSel, rerender:()=>renderAll(),
   td:r=>`<td>${r.cm.date}${r.cm.approx?"*":""}</td><td>${esc(r.cm.name)}${r.cm.k==="other"?' <span class="muted">(non-MK)</span>':""}</td><td>${TYPES[r.t].label}</td><td>${agLbl(r.ag,r.cm.y)}</td>`};
 const renderTimeline = ()=>drawTimeline(huTL);
 
+// ---------- coach's development profile (from Czakó László's proposal) ----------
+// Disciplines stay separate. A percentile is a placing within a field, not a measure of technique.
+const median = v=>{ const a=v.slice().sort((x,y)=>x-y), m=a.length>>1; return a.length?(a.length%2?a[m]:(a[m-1]+a[m])/2):null; };
+let coachId = null;
+function renderCoachProfile(){
+  const ids=selected.filter(id=>people.has(id)), picker=$("coachPick");
+  if (!ids.includes(coachId)) coachId=ids[0]??null;
+  picker.innerHTML=ids.map(id=>`<option value="${id}">${esc(people.get(id).name)}</option>`).join("");
+  picker.hidden=ids.length<2;
+  if (coachId==null){ $("coachProfile").innerHTML='<div class="empty">Select a competitor in the table above.</div>'; return; }
+  picker.value=String(coachId);
+  const f={...filt(), t:""}, rs=(resByP.get(coachId)||[]).filter(r=>inF(r,f)&&(r.t==="BOULDER"||r.t==="LEAD"));
+  const groups=new Map();
+  for (const r of rs){ const k=r.cm.y+"|"+r.t; (groups.get(k)||groups.set(k,[]).get(k)).push(r); }
+  const seasons=[...new Set(rs.map(r=>r.cm.y))].sort((a,b)=>a-b), first=seasons[0], last=seasons.at(-1);
+  const nb=rs.filter(r=>r.t==="BOULDER").length;
+  let h=`<div class="coach-grid"><div class="coach-metric"><b>${rs.length}</b>boulder and lead starts</div><div class="coach-metric"><b>${nb} / ${rs.length-nb}</b>boulder / lead</div><div class="coach-metric"><b>${first==null?"–":first===last?first:first+"–"+last}</b>seasons</div></div>`;
+  if (!rs.length){ $("coachProfile").innerHTML=h+'<div class="empty">No boulder or lead results in the selected period.</div>'; return; }
+  h+='<div class="scroll"><table class="coach-table"><thead><tr><th>Season</th><th>Discipline</th><th>Category</th><th class="num">Starts</th><th class="num">Median field</th><th class="num">Median percentile</th><th>Range and reading</th></tr></thead><tbody>';
+  for (const y of seasons) for (const t of ["BOULDER","LEAD"]){
+    const a=groups.get(y+"|"+t); if (!a) continue;
+    const sc=a.filter(r=>r.s!=null).map(r=>r.s), cats=[...new Set(a.map(r=>uLbl(r.ag,y)))], fields=a.map(r=>r.n).filter(Number.isFinite);
+    const range=sc.length?`${Math.min(...sc).toFixed(0)}–${Math.max(...sc).toFixed(0)}`:"–";
+    const note=sc.length<3?`<span class="coach-caution">Few ranked results (${sc.length}/3)</span>`
+      :cats.length>1?'<span class="coach-caution">Several categories: check separately</span>':"spread across results";
+    h+=`<tr><td>${y}</td><td>${TYPES[t].label}</td><td>${cats.join(", ")}</td><td class="num">${a.length}</td><td class="num">${fields.length?median(fields).toFixed(0):"–"}</td><td class="num">${fmt(median(sc))}</td><td>${range} · ${note}</td></tr>`;
+  }
+  h+='</tbody></table></div>';
+  h+='<p class="coach-note">3 starts is only a display threshold: read a season value below it with extra care. The percentile comes from the place and the field size. Fields and problems differ between competitions, and seasons across an age-category change are not directly comparable. The discipline and type filters are ignored here; the season range and the non-MK filter apply. Speed is not shown.</p>';
+  h+='<p class="coach-note"><b>Coach check:</b> when a value changes, look at the individual competitions and the video; the result does not name the cause.</p>';
+  $("coachProfile").innerHTML=h;
+}
+$("coachPick").onchange=e=>{ coachId=+e.target.value; renderCoachProfile(); };
+
 // ---------- birth year x season heatmap ----------
 function cellColor(v){
   const i=Math.round(Math.max(0,Math.min(100,v))/100*(RAMP.length-1)), dark=isDark();
@@ -435,7 +487,7 @@ function renderTable(rows){
 function renderAll(){
   const rows=visible(), f=filt();
   $("stats").textContent=`${rows.length} competitors · ${rows.reduce((a,s)=>a+s.n,0)} results · ${DATA.comps.filter(c=>c.y>=f.from&&c.y<=f.to&&(f.other||c.k==="mk")).length} competitions`;
-  renderCohort(rows); renderTable(rows); renderTimeline(); renderStandings();
+  renderCohort(rows); renderTable(rows); renderTimeline(); renderCoachProfile(); renderStandings();
 }
 // re-render after a row click without moving anything: the clicked row stays under the mouse and the
 // tables keep their own scroll position, so several rows can be clicked in a row
